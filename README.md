@@ -1,154 +1,206 @@
-# GDExtension ARCore Plugin
+# godot_arcore (Godot 4.7 fork)
 
-> **Fork of [GodotVR/godot_arcore](https://github.com/GodotVR/godot_arcore), updated for Godot 4.7.**
-> Tested on a Samsung Galaxy Note 10+ (Godot 4.7.2, Compatibility renderer).
->
-> Changes from upstream:
-> - Build: AGP 8.5.2, Kotlin 1.9.24, NDK 27 (AGP 7.4 fails with JDK 21).
-> - Camera feed: call `CameraServer.monitoring_feeds = true` before starting (Godot 4.5+ hands out no feeds otherwise), and set
->   `Environment.background_camera_feed_id` to `get_camera_feed_id()` (the device cameras take ids 1..N).
-> - Initialization retries after a failure. `get_last_error()` reports the ARCore status.
-> - `configureSession()` is safe to call before the session exists.
-> - New `hit_test_plane(x, y)`, which returns `{hit, transform, anchor_id}`, plus `get_anchor_transform`, `is_anchor_tracking` and `remove_anchor`.
->   The original `getHitPose`/`getHitRayPose` are broken and not used.
-> - Demo: an on-screen diagnostics overlay, tap-to-place anchored markers, and a darkness post-process shader test.
->   `ruler.blend` was removed, so the demo builds without Blender.
+ARCore plugin for **Godot 4.7** on Android, built as a GDExtension.
+It gives you the camera feed as the scene background, 6DoF phone tracking,
+plane detection, and hit tests that return persistent ARCore anchors.
 
+This is a fork of [GodotVR/godot_arcore](https://github.com/GodotVR/godot_arcore).
+Upstream targets Godot 4.2–4.4 and shows a black screen on Godot 4.5+.
+This fork fixes that and adds a working hit test and anchor API.
+
+| | |
+|---|---|
+| **Godot** | 4.7.2 (Compatibility renderer) |
+| **Platform** | Android, arm64-v8a |
+| **ARCore SDK** | 1.44 |
+| **Tested on** | Samsung Galaxy Note 10+ (SM-N975F) |
+| **License** | MIT (same as upstream) |
+
+> iOS / ARKit is out of scope for this repo.
+
+## Features
+
+- **Camera passthrough:** the ARCore camera image is the 3D scene's background.
+- **Tracking:** the phone's position and rotation drive the XR camera.
+- **Plane detection:** horizontal and/or vertical planes, drawn as debug meshes.
+- **Hit test + anchors:** tap the screen to find a point on a detected plane and get an ARCore anchor that ARCore keeps correcting as it learns more about the room.
+- **Light estimation:** main light direction and intensity.
+- Instant placement, point cloud and image detection flags from upstream are kept, but are untested in this fork.
+
+Measured on the Note 10+: steady 30 FPS (the camera rate), and anchors stay within 2.5–3.5 cm after a full lap of a room.
+
+## Quick start (use the prebuilt demo as a template)
+
+1. Build the plugin (see [Building](#building)). The output lands in `plugin/demo/addons/ARCorePlugin/`.
+2. Copy `plugin/demo/addons/ARCorePlugin/` into your project's `addons/` folder.
+3. In Godot:
+   - **Project → Project Settings → Plugins**: enable *ARCorePlugin*. This adds the `ARCoreInterfaceInstance` autoload.
+   - **Project Settings → Rendering**: set the renderer to *Compatibility*.
+   - **Project → Install Android Build Template**.
+   - **Export → Android preset**:
+     - enable *Use Gradle Build*
+     - set *XR Mode* to *Regular*
+     - enable the *Camera* permission
+     - target only *arm64-v8a*
+4. Add a `Camera3D` with an `Environment` whose background mode is *Camera Feed*, then start AR (below).
 
 ## Usage
-**Note:** [Android Studio](https://developer.android.com/studio) is the recommended IDE for
-developing Godot Android plugins.
-You can install the latest version from https://developer.android.com/studio.
 
-Clone the repository to your local machine, run the following command in the project root
-directory to initialize the `godot-cpp` submodule:
-```
-git submodule update --init
-```
+### Start AR
 
-### Building the C++ bindings
-Build the Android C++ bindings using the following commands. To speed up compilation, add `-jN` at
-the end of the SCons command line where `N` is the number of CPU threads you have on your system.
-The example below uses 4 threads.
-```
-cd godot-cpp
-scons platform=android target=template_debug -j4
-scons platform=android target=template_release -j4
-```
+```gdscript
+extends Node3D
 
-When the command is completed, you should have static libraries stored in `godot-cpp/bin` that
-will be used for compilation by the plugin.
+@onready var camera: Camera3D = $Camera3D
+var _ar_started := false
+var _retry := 0.0
 
-### Building the configured Android plugin
-- In a terminal window, navigate to the project's root directory and run the following command:
-```
-./gradlew assemble
-```
-- On successful completion of the build, the output files can be found in
-  [`plugin/demo/addons`](plugin/demo/addons)
+func _ready() -> void:
+	Engine.get_singleton("ARCorePlugin").initializeEnvironment()
+	_try_start()
 
-### Building the configured Android plugin with Android Studio
-- Open Android Studio and Click on `Open...` navigate to the git repo and click on `godot_arcore_plugin` where the android robot shows up and wait for Android Studio to finish loading
+func _process(delta: float) -> void:
+	# On first launch ARCore waits for the camera permission, so keep retrying.
+	if not _ar_started:
+		_retry += delta
+		if _retry > 1.0:
+			_retry = 0.0
+			_try_start()
 
-- In the top bar click on `Add Configuration...` and then `Edit Configurations...`
-
-- For the development you can create two configurations, one for building the project and one for cleaning the output folders:
-
-- Click on the `+` sign and choose "Gradle" as the type for the configuration
-
-- In the window to the right give the configuration a name - *`build` in this case* - and under "Run" type `assemble`, which corresponds to the command `./gradlew assemble` which you would do in the command line
-
-- You can repeat the steps for the gradle task `clean` if you want
-
-### Testing the Android plugin
-You can use the included [Godot demo project](plugin/demo/project.godot) to test the built Android plugin
-
-- Open the demo in Godot (4.2 or higher)
-- Navigate to `Project` -> `Project Settings...` -> `Plugins`, and ensure the plugin is enabled
-- Install the Godot Android build template by clicking on `Project` -> `Install Android Build Template...`
-- Open [`plugin/demo/main.gd`](plugin/demo/main.gd) and update the logic as needed to reference
-  your plugin and its methods
-- Connect an Android device to your machine and run the demo on it
-
-### Testing the Android Plugin with the Android Studio Device Emulator
-
-Follow the installation in [Run AR Apps in Android Emulator](https://developers.google.com/ar/develop/java/emulator) and create a device
-
-For the Android plugin and the resulting app to compile you have to add x86 ABIs to your setup. That means compiling godot-cpp for x86_32 and x86_64 and making some changes to the build.gradle.kts file of the plugin:
-
-Add these lines to you `plugin/build.gradle.kts`:
-```gradle
-ndk {
-	abiFilters.add("arm64-v8a")
-	abiFilters.add("x86")
-	abiFilters.add("x86_64")
-}
-```
-
-To compile godot-cpp for the two architectures, navigate to the `godot-cpp` submodule and build it. See [Building the C++ bindings](https://docs.godotengine.org/en/stable/tutorials/scripting/gdextension/gdextension_cpp_example.html#building-the-c-bindings) for details.
-
-```bash
-cd godot-cpp
-scons platform=android target=template_debug arch=x86_32
-scons platform=android target=template_debug arch=x86_64
-scons platform=android target=template_release arch=x86_32
-scons platform=android target=template_release arch=x86_64
-```
-
-When exporting the Godot app with the plugin enabled, don't forget to add the architectures to your build.
-Open your project in the Godot Engine, navigate to `Project` -> `Export...` click on your Android Preset and under "Architectures" enable both `x86` and `x86_64`
-
-#### Tips
-
-##### Simplify access to the exposed Java / Kotlin APIs
-
-To make it easier to access the exposed Java / Kotlin APIs in the Godot Editor, it's recommended to
-provide one (or multiple) gdscript wrapper class(es) for your plugin users to interface with.
-
-For example:
-
-```
-class_name PluginInterface extends Object
-
-## Interface used to access the functionality provided by this plugin
-
-var _plugin_name = "GDExtensionAndroidPluginTemplate"
-var _plugin_singleton
-
-func _init():
-	if Engine.has_singleton(_plugin_name):
-		_plugin_singleton = Engine.get_singleton(_plugin_name)
+func _try_start() -> void:
+	_ar_started = ARCoreInterfaceInstance.start()
+	if _ar_started:
+		var ar = ARCoreInterfaceInstance.get_interface()
+		camera.environment.background_camera_feed_id = ar.get_camera_feed_id()
 	else:
-		printerr("Initialization error: unable to access the java logic")
-
-## Print a 'Hello World' message to the logcat.
-func helloWorld():
-	if _plugin_singleton:
-		_plugin_singleton.helloWorld()
-	else:
-		printerr("Initialization error")
-
+		print("AR not started: ", ARCoreInterfaceInstance.get_last_error())
 ```
 
-##### Support using the gdextension functionality in the Godot Editor
+`ARCoreInterfaceInstance.start()` turns on `CameraServer.monitoring_feeds` and sets `use_xr` on the viewport for you.
 
-If planning to use the gdextension functionality in the Godot Editor, it is recommended that the
-gdextension's native binaries are compiled not just for Android, but also for the OS onto which
-developers / users intend to run the Godot Editor. Not doing so may prevent developers /
-users from writing code that accesses the plugin from within the Godot Editor.
+### Place an anchored object on a plane
 
-This may involve creating dummy plugins for the host OS just so the API is published to the
-editor. You can use the [godot-cpp-template](https://github.com/godotengine/godot-cpp-template)
-github template for reference on how to do so.
+```gdscript
+func _ready() -> void:
+	ARCoreInterfaceInstance.enable_horizontal_plane_detection(true)
 
-## Gotchas
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch and event.pressed:
+		var ar = ARCoreInterfaceInstance.get_interface()
+		var hit: Dictionary = ar.hit_test_plane(event.position.x, event.position.y)
+		if hit.hit:
+			var marker := preload("res://marker.tscn").instantiate()
+			marker.transform = hit.transform
+			marker.set_meta("anchor_id", hit.anchor_id)
+			marker.add_to_group("markers")
+			add_child(marker)
 
-Currently, the gradlew script has Windows-style line endings which stops the script from executing under Linux.
+func _process(_delta: float) -> void:
+	var ar = ARCoreInterfaceInstance.get_interface()
+	for marker in get_tree().get_nodes_in_group("markers"):
+		var id: int = marker.get_meta("anchor_id")
+		if ar.is_anchor_tracking(id):
+			marker.transform = ar.get_anchor_transform(id)  # follow ARCore's corrections
+```
 
-To fix that, navigate to the folder where the `gradlew` script is and enter the following command:
+## API
+
+Methods on the `ARCoreInterface` object, from `ARCoreInterfaceInstance.get_interface()`:
+
+| Method | Description |
+|---|---|
+| `get_camera_feed_id() -> int` | Id of the ARCore `CameraFeed`. Assign it to `Environment.background_camera_feed_id`. |
+| `get_last_error() -> String` | Last ARCore failure, e.g. `ArSession_create failed: -100`. |
+| `hit_test_plane(x, y) -> Dictionary` | Hit test against detected planes at a screen position. Returns `{hit: bool, transform: Transform3D, anchor_id: int}`. |
+| `get_anchor_transform(anchor_id) -> Transform3D` | Current pose of an anchor in world space. |
+| `is_anchor_tracking(anchor_id) -> bool` | Whether ARCore is currently tracking the anchor. |
+| `remove_anchor(anchor_id)` | Detaches and frees the anchor. |
+| `enable_horizontal_plane_detection(bool)` / `enable_vertical_plane_detection(bool)` | Plane finding mode. |
+| `enable_light_estimation(bool)`, `get_light_main_hdr_direction()`, `get_light_main_hdr_intensity()` | Environmental HDR light estimate. |
+| `enable_depth_estimation(bool)`, `is_depth_supported()` | Depth API toggle (depth image is not yet exposed). |
+
+The upstream `getHitPose` / `getHitRayPose` methods are still bound but are **broken**: they use unallocated ARCore objects. Use `hit_test_plane` instead.
+
+## Building
+
+### Requirements
+
+- Android Studio (for the SDK and its bundled JDK 21)
+- Android NDK **27.0.12077973**, SDK platform 33, build-tools 35
+- Python 3 + SCons (`pip install scons`)
+
+### 1. Clone with submodules
 
 ```sh
-dos2unix ./gradlew
+git clone --recurse-submodules https://github.com/Hankium/godot_arcore.git
+cd godot_arcore
 ```
 
-This will convert the line endings to LF.
+### 2. Build godot-cpp for Android
+
+`godot-cpp` hardcodes NDK 23. To use NDK 27, leave `ANDROID_HOME` empty and point `ANDROID_NDK_ROOT` at it:
+
+```sh
+cd godot-cpp
+export ANDROID_NDK_ROOT=$ANDROID_SDK/ndk/27.0.12077973
+scons platform=android arch=arm64 target=template_debug   ANDROID_HOME= custom_api_file=../thirdparty/godot_cpp_extension_api/extension_api.json -j8
+scons platform=android arch=arm64 target=template_release ANDROID_HOME= custom_api_file=../thirdparty/godot_cpp_extension_api/extension_api.json -j8
+cd ..
+```
+
+<details><summary>Windows (PowerShell)</summary>
+
+```powershell
+cd godot-cpp
+$env:ANDROID_NDK_ROOT = "$env:LOCALAPPDATA\Android\Sdk\ndk\27.0.12077973"
+python -m SCons platform=android arch=arm64 target=template_debug   "ANDROID_HOME=" custom_api_file=../thirdparty/godot_cpp_extension_api/extension_api.json -j8
+python -m SCons platform=android arch=arm64 target=template_release "ANDROID_HOME=" custom_api_file=../thirdparty/godot_cpp_extension_api/extension_api.json -j8
+cd ..
+```
+</details>
+
+### 3. Build the plugin
+
+Create `local.properties` in the repo root with `sdk.dir=<path to Android SDK>`, then:
+
+```sh
+JAVA_HOME="<Android Studio>/jbr" ./gradlew assemble
+```
+
+The AARs are copied to `plugin/demo/addons/ARCorePlugin/bin/`.
+
+> On Linux, if `./gradlew` fails to start, convert its line endings with `dos2unix ./gradlew`.
+
+### 4. Run the demo
+
+Open `plugin/demo/project.godot` in Godot 4.7 and export to an ARCore-capable phone. The demo includes:
+
+- the upstream feature toggles (left)
+- a yellow **diagnostics overlay**: XR interface state, camera feeds, permissions, tracking status and the log tail. Useful without adb.
+- **tap-to-place markers** anchored to planes, with a live "anchor shift" readout
+- a **darkness post-process** test (flashlight cone, grain, vignette) over the camera feed
+
+On desktop the editor reports `ARCoreInterface` parse errors. That's expected: the class only exists in the Android build.
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| Black background, objects drawn | The Environment isn't bound to the ARCore feed, or feed monitoring is off. Use `ARCoreInterfaceInstance.start()` and set `background_camera_feed_id` as shown above. |
+| Background smears / trails | Same as above: nothing clears the frame because no feed is drawn. |
+| `ARCore(init=false)` | Check `get_last_error()`. Common causes: the camera permission isn't granted yet (keep retrying), or *Google Play Services for AR* is missing or outdated. |
+| `jlink` error during Gradle build | You're on AGP < 8.2 with JDK 21. This fork uses AGP 8.5.2. |
+| Crash once planes appear after editing `plane_renderer.cpp` | Keep the `CSGPolygon3D` depth at 0.01 or more; 0.002 crashes. |
+| `CameraServer is not actively monitoring feeds` | Set `CameraServer.monitoring_feeds = true` before reading feeds (`start()` does this). |
+
+## Known limitations
+
+- arm64 only by default. x86/x86_64 for the emulator needs extra godot-cpp builds and ABI filters (see the upstream README history).
+- Plane debug meshes are rebuilt every frame and use CSG. Fine for debugging; use your own visuals for production.
+- Display rotation is fixed to landscape.
+- Depth images, image tracking and point clouds are not exposed beyond the upstream toggles.
+
+## Credits
+
+Original plugin by the [GodotVR](https://github.com/GodotVR) contributors (see [CONTRIBUTORS.md](CONTRIBUTORS.md)).
+Godot 4.7 fixes and the anchor API by [Hankium](https://github.com/Hankium).
