@@ -116,6 +116,7 @@ Methods on the `ARCoreInterface` object, from `ARCoreInterfaceInstance.get_inter
 | `is_anchor_tracking(anchor_id) -> bool` | Whether ARCore is currently tracking the anchor. |
 | `remove_anchor(anchor_id)` | Detaches and frees the anchor. |
 | `enable_horizontal_plane_detection(bool)` / `enable_vertical_plane_detection(bool)` | Plane finding mode. |
+| `set_planes_visible(bool)` | Draws the debug plane meshes (default `true`). Set it to `false` in production: detection and hit tests keep working. |
 | `enable_light_estimation(bool)`, `get_light_main_hdr_direction()`, `get_light_main_hdr_intensity()` | Environmental HDR light estimate. |
 | `enable_depth_estimation(bool)`, `is_depth_supported()` | Depth API toggle (depth image is not yet exposed). |
 

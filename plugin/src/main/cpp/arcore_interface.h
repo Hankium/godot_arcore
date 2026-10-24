@@ -93,6 +93,7 @@ public:
 	godot::Transform3D get_anchor_transform(int p_anchor_id);
 	bool is_anchor_tracking(int p_anchor_id);
 	void remove_anchor(int p_anchor_id);
+	void set_planes_visible(bool p_visible) { m_show_planes = p_visible; }
 	float getNear() { return m_z_near; }
 	float getFar() { return m_z_far; }
 
@@ -114,6 +115,7 @@ private:
 	godot::String m_last_error;
 	std::map<int, ArAnchor *> m_anchors;
 	int m_next_anchor_id = 1;
+	bool m_show_planes = true;
 	ArSession *m_ar_session;
 	ArFrame *m_ar_frame;
 	int m_screen_width;

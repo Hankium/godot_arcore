@@ -37,6 +37,7 @@ void ARCoreInterface::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_anchor_transform", "anchor_id"), &ARCoreInterface::get_anchor_transform);
 	ClassDB::bind_method(D_METHOD("is_anchor_tracking", "anchor_id"), &ARCoreInterface::is_anchor_tracking);
 	ClassDB::bind_method(D_METHOD("remove_anchor", "anchor_id"), &ARCoreInterface::remove_anchor);
+	ClassDB::bind_method(D_METHOD("set_planes_visible", "visible"), &ARCoreInterface::set_planes_visible);
 }
 
 Dictionary ARCoreInterface::hit_test_plane(float p_screen_x, float p_screen_y) {
@@ -811,7 +812,8 @@ void ARCoreInterface::_process() {
 		estimateLight();
 	}
 
-	if (m_enable_vertical_plane_detection || m_enable_horizontal_plane_detection) {
+	// Detection stays on for hit tests; drawing the planes is only a debug aid.
+	if (m_show_planes && (m_enable_vertical_plane_detection || m_enable_horizontal_plane_detection)) {
 		m_plane_renderer.process(*m_ar_session);
 	} else {
 		m_plane_renderer.clear();
