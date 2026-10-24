@@ -8,16 +8,25 @@
 
 config_version=5
 
+[animation]
+
+compatibility/default_parent_skeleton_in_mesh_instance_3d=true
+
 [application]
 
 config/name="Godot_ARCore_example"
 run/main_scene="res://main3D.tscn"
-config/features=PackedStringArray("4.4", "GL Compatibility")
+config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://Godot_ARCoreExample.png"
 
 [autoload]
 
-ARCoreInterfaceInstance="*res://addons/ARCorePlugin/ARCoreInterface.gd"
+ARCoreInterfaceInstance="*uid://cmtppfncsqb2p"
+DebugOverlay="*res://debug_overlay.gd"
+
+[debug]
+
+file_logging/enable_file_logging=true
 
 [display]
 

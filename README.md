@@ -1,5 +1,19 @@
 # GDExtension ARCore Plugin
 
+> **Fork of [GodotVR/godot_arcore](https://github.com/GodotVR/godot_arcore), updated for Godot 4.7.**
+> Tested on a Samsung Galaxy Note 10+ (Godot 4.7.2, Compatibility renderer).
+>
+> Changes from upstream:
+> - Build: AGP 8.5.2, Kotlin 1.9.24, NDK 27 (AGP 7.4 fails with JDK 21).
+> - Camera feed: call `CameraServer.monitoring_feeds = true` before starting (Godot 4.5+ hands out no feeds otherwise), and set
+>   `Environment.background_camera_feed_id` to `get_camera_feed_id()` (the device cameras take ids 1..N).
+> - Initialization retries after a failure. `get_last_error()` reports the ARCore status.
+> - `configureSession()` is safe to call before the session exists.
+> - New `hit_test_plane(x, y)`, which returns `{hit, transform, anchor_id}`, plus `get_anchor_transform`, `is_anchor_tracking` and `remove_anchor`.
+>   The original `getHitPose`/`getHitRayPose` are broken and not used.
+> - Demo: an on-screen diagnostics overlay, tap-to-place anchored markers, and a darkness post-process shader test.
+>   `ruler.blend` was removed, so the demo builds without Blender.
+
 
 ## Usage
 **Note:** [Android Studio](https://developer.android.com/studio) is the recommended IDE for

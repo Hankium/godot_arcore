@@ -8,6 +8,7 @@
 #define ARCOREPLUGIN_ARCORE_INTERFACE_H
 
 #include "godot_cpp/variant/projection.hpp"
+#include <map>
 #include "include/arcore_c_api.h"
 #include <godot_cpp/classes/xr_interface_extension.hpp>
 #include <godot_cpp/classes/xr_positional_tracker.hpp>
@@ -87,6 +88,11 @@ public:
 	godot::Vector3 get_light_main_hdr_direction();
 	godot::Vector3 get_light_main_hdr_intensity();
 
+	godot::String get_last_error() const { return m_last_error; }
+	godot::Dictionary hit_test_plane(float p_screen_x, float p_screen_y);
+	godot::Transform3D get_anchor_transform(int p_anchor_id);
+	bool is_anchor_tracking(int p_anchor_id);
+	void remove_anchor(int p_anchor_id);
 	float getNear() { return m_z_near; }
 	float getFar() { return m_z_far; }
 
@@ -105,6 +111,9 @@ private:
 	arcore_plugin::PointCloudRenderer m_point_cloud_renderer;
 
 	InitStatus m_init_status;
+	godot::String m_last_error;
+	std::map<int, ArAnchor *> m_anchors;
+	int m_next_anchor_id = 1;
 	ArSession *m_ar_session;
 	ArFrame *m_ar_frame;
 	int m_screen_width;

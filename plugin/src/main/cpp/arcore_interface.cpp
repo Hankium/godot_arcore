@@ -32,6 +32,109 @@ void ARCoreInterface::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_light_main_hdr_intensity"), &ARCoreInterface::get_light_main_hdr_intensity);
 	ClassDB::bind_method(D_METHOD("getNear"), &ARCoreInterface::getNear);
 	ClassDB::bind_method(D_METHOD("getFar"), &ARCoreInterface::getFar);
+	ClassDB::bind_method(D_METHOD("get_last_error"), &ARCoreInterface::get_last_error);
+	ClassDB::bind_method(D_METHOD("hit_test_plane", "screen_x", "screen_y"), &ARCoreInterface::hit_test_plane);
+	ClassDB::bind_method(D_METHOD("get_anchor_transform", "anchor_id"), &ARCoreInterface::get_anchor_transform);
+	ClassDB::bind_method(D_METHOD("is_anchor_tracking", "anchor_id"), &ARCoreInterface::is_anchor_tracking);
+	ClassDB::bind_method(D_METHOD("remove_anchor", "anchor_id"), &ARCoreInterface::remove_anchor);
+}
+
+Dictionary ARCoreInterface::hit_test_plane(float p_screen_x, float p_screen_y) {
+	Dictionary result;
+	result["hit"] = false;
+	if (m_ar_session == nullptr || m_ar_frame == nullptr) {
+		return result;
+	}
+
+	ArHitResultList *hit_list = nullptr;
+	ArHitResultList_create(m_ar_session, &hit_list);
+	ArFrame_hitTest(m_ar_session, m_ar_frame, p_screen_x, p_screen_y, hit_list);
+
+	int32_t size = 0;
+	ArHitResultList_getSize(m_ar_session, hit_list, &size);
+
+	ArHitResult *hit = nullptr;
+	ArHitResult_create(m_ar_session, &hit);
+	ArPose *pose = nullptr;
+	ArPose_create(m_ar_session, nullptr, &pose);
+
+	// Results are sorted nearest first; take the first one inside a plane's polygon.
+	for (int32_t i = 0; i < size; ++i) {
+		ArHitResultList_getItem(m_ar_session, hit_list, i, hit);
+
+		ArTrackable *trackable = nullptr;
+		ArHitResult_acquireTrackable(m_ar_session, hit, &trackable);
+		ArTrackableType type = AR_TRACKABLE_NOT_VALID;
+		ArTrackable_getType(m_ar_session, trackable, &type);
+
+		bool on_plane = false;
+		if (type == AR_TRACKABLE_PLANE) {
+			ArHitResult_getHitPose(m_ar_session, hit, pose);
+			int32_t in_polygon = 0;
+			ArPlane_isPoseInPolygon(m_ar_session, ArAsPlane(trackable), pose, &in_polygon);
+			on_plane = in_polygon != 0;
+		}
+		ArTrackable_release(trackable);
+
+		if (on_plane) {
+			float mat4[16];
+			ArPose_getMatrix(m_ar_session, pose, mat4);
+			result["transform"] = to_godot_transform(mat4);
+			result["hit"] = true;
+
+			ArAnchor *anchor = nullptr;
+			if (ArHitResult_acquireNewAnchor(m_ar_session, hit, &anchor) == AR_SUCCESS) {
+				int anchor_id = m_next_anchor_id++;
+				m_anchors[anchor_id] = anchor;
+				result["anchor_id"] = anchor_id;
+			}
+			break;
+		}
+	}
+
+	ArPose_destroy(pose);
+	ArHitResult_destroy(hit);
+	ArHitResultList_destroy(hit_list);
+	return result;
+}
+
+Transform3D ARCoreInterface::get_anchor_transform(int p_anchor_id) {
+	auto it = m_anchors.find(p_anchor_id);
+	if (m_ar_session == nullptr || it == m_anchors.end()) {
+		return Transform3D();
+	}
+
+	ArPose *pose = nullptr;
+	ArPose_create(m_ar_session, nullptr, &pose);
+	ArAnchor_getPose(m_ar_session, it->second, pose);
+	float mat4[16];
+	ArPose_getMatrix(m_ar_session, pose, mat4);
+	ArPose_destroy(pose);
+	return to_godot_transform(mat4);
+}
+
+bool ARCoreInterface::is_anchor_tracking(int p_anchor_id) {
+	auto it = m_anchors.find(p_anchor_id);
+	if (m_ar_session == nullptr || it == m_anchors.end()) {
+		return false;
+	}
+
+	ArTrackingState state = AR_TRACKING_STATE_STOPPED;
+	ArAnchor_getTrackingState(m_ar_session, it->second, &state);
+	return state == AR_TRACKING_STATE_TRACKING;
+}
+
+void ARCoreInterface::remove_anchor(int p_anchor_id) {
+	auto it = m_anchors.find(p_anchor_id);
+	if (it == m_anchors.end()) {
+		return;
+	}
+
+	if (m_ar_session != nullptr) {
+		ArAnchor_detach(m_ar_session, it->second);
+	}
+	ArAnchor_release(it->second);
+	m_anchors.erase(it);
 }
 
 ARCoreInterface::ARCoreInterface() {
@@ -77,6 +180,7 @@ void ARCoreInterface::_resume() {
 
 		if (status != AR_SUCCESS) {
 			ALOGE("ARCorePlugin: Failed to resume");
+			m_last_error = vformat("ArSession_resume failed: %d", (int)status);
 			// TODO: Quit or end the ARCore session gracefully
 		}
 	}
@@ -295,9 +399,11 @@ bool ARCoreInterface::_initialize() {
 	ERR_FAIL_NULL_V(xr_server, false);
 
 	if (m_init_status == INITIALISE_FAILED) {
-		// If the interface failed to initialise, don't try again
-		return false;
-	} else if (m_init_status == NOT_INITIALISED) {
+		// Retry: a failure can be transient (camera permission or ARCore install pending).
+		m_init_status = NOT_INITIALISED;
+	}
+
+	if (m_init_status == NOT_INITIALISED) {
 		m_init_status = START_INITIALISE;
 
 		if (m_ar_session == nullptr) {
@@ -308,12 +414,16 @@ bool ARCoreInterface::_initialize() {
 
 			if (context == nullptr) {
 				ALOGE("ARCorePlugin: Couldn't get global context");
+				m_last_error = "No global context";
 				m_init_status = INITIALISE_FAILED;
 				return false;
 			}
 
-			if (ArSession_create(env, context, &m_ar_session) != AR_SUCCESS || m_ar_session == nullptr) {
+			ArStatus create_status = ArSession_create(env, context, &m_ar_session);
+			if (create_status != AR_SUCCESS || m_ar_session == nullptr) {
 				ALOGE("ARCorePlugin: Session couldn't be created");
+				m_last_error = vformat("ArSession_create failed: %d", (int)create_status);
+				m_ar_session = nullptr;
 				m_init_status = INITIALISE_FAILED;
 				return false;
 			}
@@ -750,6 +860,11 @@ void ARCoreInterface::notification(int p_what) {
 }
 
 void ARCoreInterface::configureSession() {
+	if (m_ar_session == nullptr) {
+		// Settings are applied when the session is created.
+		return;
+	}
+
 	ArConfig *ar_config = nullptr;
 	ArConfig_create(m_ar_session, &ar_config);
 	if (is_depth_supported() && m_enable_depth_estimation) {

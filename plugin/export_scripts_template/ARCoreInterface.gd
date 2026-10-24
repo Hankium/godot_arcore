@@ -19,9 +19,16 @@ func _exit_tree():
 func get_interface():
 	return arcore_interface
 
-func start():
+func start() -> bool:
+	# Godot 4.5+: feeds (including ours) are only handed out while monitoring.
+	CameraServer.monitoring_feeds = true
 	if arcore_interface.initialize():
 		get_viewport().use_xr = true
+		return true
+	return false
+
+func get_last_error() -> String:
+	return arcore_interface.get_last_error() if arcore_interface else "no interface"
 
 func get_tracking_status():
 	return arcore_interface.get_tracking_status()

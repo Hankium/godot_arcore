@@ -25,15 +25,35 @@ func _ready():
 	var interface_name = ar_interface.get_name()
 	print("MCT " + interface_name)
 
-	ARCoreInterfaceInstance.start()
-
 	original_light_trsf = $DirectionalLight3D.transform
+	add_child(preload("res://spike_test.gd").new())
+	_try_start_ar()
+
+var _ar_started := false
+var _retry_timer := 0.0
+
+func _try_start_ar():
+	_ar_started = ARCoreInterfaceInstance.start()
+	if _ar_started:
+		# Godot 4.5+ registers the device cameras as feeds too, so the
+		# Environment's default feed id (1) is not the ARCore feed.
+		var feed_id = ARCoreInterfaceInstance.get_interface().get_camera_feed_id()
+		$Origin3D/Camera3D.environment.background_camera_feed_id = feed_id
+	else:
+		print("AR start failed: " + ARCoreInterfaceInstance.get_last_error())
 
 func _exit_tree():
 	_android_plugin.uninitializeEnvironment()
 
 # Called every frame. 'delta' is the elapsed time since the previous frame.
 func _process(delta):
+	# Retry until ARCore starts (first launch waits on camera permission).
+	if not _ar_started:
+		_retry_timer += delta
+		if _retry_timer > 1.0:
+			_retry_timer = 0.0
+			_try_start_ar()
+
 	if (is_estimating_light):
 		var light_dir = ARCoreInterfaceInstance.get_light_main_hdr_direction()
 		$DirectionalLight3D.rotation = light_dir
